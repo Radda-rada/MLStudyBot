@@ -4,7 +4,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from bot.handlers import (
     start, help_command, handle_lesson, handle_quiz,
     handle_progress, handle_answer, handle_ask, handle_explain,
-    handle_history, handle_meme
+    handle_history, handle_meme, handle_stats, handle_user_stats
 )
 from app import init_db
 
@@ -31,6 +31,9 @@ def main():
     application.add_handler(CommandHandler("explain", handle_explain))
     application.add_handler(CommandHandler("history", handle_history))
     application.add_handler(CommandHandler("meme", handle_meme))
+    # Добавляем новые команды для статистики
+    application.add_handler(CommandHandler("stats", handle_stats))
+    application.add_handler(CommandHandler("user_stats", handle_user_stats))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer))
 
     # Start the bot with optimized settings

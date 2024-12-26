@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 from telegram import Update
 from telegram.ext import ContextTypes
 from content.lessons import LESSONS
@@ -391,4 +392,96 @@ async def handle_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "😔 Произошла ошибка при генерации мема. "
             "Пожалуйста, попробуйте позже.\n\n"
             "❓ Если проблема повторяется, обращайтесь к @raddayurieva"
+        )
+
+
+async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать статистику для админа."""
+    # Проверяем, является ли пользователь админом
+    ADMIN_ID = int(os.environ.get("ADMIN_TELEGRAM_ID", "0"))
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(
+            "❌ У вас нет доступа к этой команде."
+        )
+        return
+
+    all_stats = await asyncio.to_thread(get_all_users_statistics)
+
+    if not all_stats:
+        await update.message.reply_text(
+            "📊 Статистика пока недоступна."
+        )
+        return
+
+    # Формируем сообщение со статистикой
+    stats_message = "📊 Статистика пользователей:\n\n"
+
+    for user_stat in all_stats:
+        stats_message += (
+            f"👤 Пользователь: {user_stat['username']}\n"
+            f"📚 Текущий урок: {user_stat['current_lesson']}\n"
+            f"✅ Завершено уроков: {user_stat['completed_lessons']}\n"
+            f"📝 Средний балл: {user_stat['average_score']:.1f}\n"
+            f"🔄 Всего попыток: {user_stat['total_attempts']}\n"
+            f"⏰ Последняя активность: {user_stat['last_activity'].strftime('%Y-%m-%d %H:%M')}\n"
+            "-------------------\n"
+        )
+
+    # Разбиваем на части, если сообщение слишком длинное
+    MAX_MESSAGE_LENGTH = 4096
+    for i in range(0, len(stats_message), MAX_MESSAGE_LENGTH):
+        await update.message.reply_text(
+            stats_message[i:i + MAX_MESSAGE_LENGTH]
+        )
+
+async def handle_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать статистику для конкретного пользователя."""
+    # Проверяем, является ли пользователь админом
+    ADMIN_ID = int(os.environ.get("ADMIN_TELEGRAM_ID", "0"))
+
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(
+            "❌ У вас нет доступа к этой команде."
+        )
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Укажите ID пользователя после команды.\n"
+            "Пример: /user_stats 123456789"
+        )
+        return
+
+    try:
+        user_id = int(context.args[0])
+        stats = await asyncio.to_thread(get_user_statistics, user_id)
+
+        if not stats:
+            await update.message.reply_text(
+                "❌ Пользователь не найден или статистика недоступна."
+            )
+            return
+
+        stats_message = (
+            f"📊 Подробная статистика пользователя {user_id}:\n\n"
+            f"⏰ Общее время: {stats['total_time_spent']} минут\n"
+            f"📝 Средний балл: {stats['average_score']:.1f}\n"
+            f"✅ Завершено уроков: {stats['completed_lessons']}\n"
+            f"🔄 Всего попыток: {stats['total_attempts']}\n"
+            f"👍 Успешных попыток: {stats['successful_attempts']}\n"
+            f"📈 Процент успеха: {stats['success_rate']:.1f}%\n"
+            f"🕒 Последняя активность: {stats['last_activity'].strftime('%Y-%m-%d %H:%M')}"
+        )
+
+        await update.message.reply_text(stats_message)
+
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Некорректный ID пользователя.\n"
+            "Используйте только цифры."
+        )
+    except Exception as e:
+        logger.error(f"Error in handle_user_stats: {str(e)}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при получении статистики."
         )

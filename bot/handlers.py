@@ -1,14 +1,14 @@
 import logging
 import json
 import os
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
 from content.lessons import LESSONS
 from content.quizzes import QUIZZES
 from bot.keyboard import get_main_keyboard, get_lesson_keyboard
 from utils.db_utils import (
     get_or_create_user, update_progress, get_user_progress,
-    update_user_lesson
+    update_user_lesson, get_user_statistics, get_all_users_statistics
 )
 from bot.ai_helper import get_ml_explanation, analyze_ml_question, generate_ml_meme, get_random_ml_history
 import time
@@ -28,36 +28,70 @@ def get_cached_quiz(quiz_id: int):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик команды start."""
+    logger.info(f"Received /start command from user {update.effective_user.id}")
     start_time = time.time()
 
-    # Асинхронно получаем или создаем пользователя
-    user = await asyncio.to_thread(
-        get_or_create_user,
-        telegram_id=update.effective_user.id,
-        username=update.effective_user.username
-    )
-    logger.info(f"User creation/fetch took {time.time() - start_time:.2f} seconds")
-
-    if not user:
-        await update.message.reply_text(
-            "Извините, произошла ошибка при создании профиля. Попробуйте позже."
+    try:
+        # Асинхронно получаем или создаем пользователя
+        user = await asyncio.to_thread(
+            get_or_create_user,
+            telegram_id=update.effective_user.id,
+            username=update.effective_user.username
         )
-        return
+        logger.debug(f"get_or_create_user result: {user}")
+        logger.info(f"User creation/fetch took {time.time() - start_time:.2f} seconds")
 
-    welcome_message = (
-        "👋 Добро пожаловать в бот для изучения машинного обучения!\n\n"
-        "🎓 Здесь вы изучите основы ML:\n"
-        "- Базовые концепции\n"
-        "- Популярные алгоритмы\n"
-        "- Практические примеры\n\n"
-        "Используйте меню для навигации"
-    )
+        if not user:
+            logger.error(f"Failed to create/get user for telegram_id {update.effective_user.id}")
+            await update.message.reply_text(
+                "Извините, произошла ошибка при создании профиля. Попробуйте позже."
+            )
+            return
 
-    await update.message.reply_text(
-        welcome_message,
-        reply_markup=get_main_keyboard()
-    )
-    logger.info(f"Total start command took {time.time() - start_time:.2f} seconds")
+        # Создаем клавиатуру заранее
+        keyboard = get_main_keyboard()
+        logger.debug("Created main keyboard")
+
+        welcome_message = (
+            "👋 Добро пожаловать в бот для изучения машинного обучения!\n\n"
+            "🎓 Здесь вы изучите основы ML:\n"
+            "- Базовые концепции\n"
+            "- Популярные алгоритмы\n"
+            "- Практические примеры\n\n"
+            "Используйте меню для навигации"
+        )
+
+        try:
+            logger.info(f"Attempting to send welcome message to user {update.effective_user.id}")
+            # Отправляем сообщение с клавиатурой
+            result = await update.message.reply_text(
+                text=welcome_message,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            logger.info(f"Successfully sent welcome message. Message ID: {result.message_id}")
+        except Exception as e:
+            logger.error(f"Failed to send welcome message: {str(e)}", exc_info=True)
+            # Пробуем отправить упрощенное сообщение без клавиатуры
+            try:
+                await update.message.reply_text(
+                    "👋 Добро пожаловать в бот! Если меню не отображается, попробуйте перезапустить бот командой /start",
+                    parse_mode='HTML'
+                )
+            except Exception as simple_e:
+                logger.error(f"Failed to send simplified message: {str(simple_e)}", exc_info=True)
+
+    except Exception as e:
+        logger.error(f"Error in start handler: {str(e)}", exc_info=True)
+        try:
+            await update.message.reply_text(
+                "Произошла ошибка при запуске бота. Пожалуйста, попробуйте позже.",
+                parse_mode='HTML'
+            )
+        except Exception as send_error:
+            logger.error(f"Failed to send error message: {str(send_error)}", exc_info=True)
+
+    logger.info(f"Total start command processing took {time.time() - start_time:.2f} seconds")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -74,7 +108,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❓ Есть вопросы или нужна помощь?\n"
         "Обращайтесь к @raddayurieva"
     )
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text, parse_mode='HTML')
 
 async def handle_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик уроков."""
@@ -119,7 +153,8 @@ async def handle_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         lesson_message,
-        reply_markup=get_lesson_keyboard()
+        reply_markup=get_lesson_keyboard(),
+        parse_mode='HTML'
     )
     logger.info(f"Lesson handling took {time.time() - start_time:.2f} seconds")
 
@@ -150,7 +185,8 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Setting quiz for user {user.id}, lesson {user.current_lesson}")
 
     await update.message.reply_text(
-        f"❓ Тест по теме {quiz['title']}\n\n{quiz['question']}"
+        f"❓ Тест по теме {quiz['title']}\n\n{quiz['question']}",
+        parse_mode='HTML'
     )
     logger.info(f"Quiz handling took {time.time() - start_time:.2f} seconds")
 
@@ -182,13 +218,15 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "✅ Правильно! Теперь вы можете пройти тест к этому уроку.\n"
                 "Используйте команду /quiz для начала тестирования.",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(),
+                parse_mode='HTML'
             )
         else:
             logger.info("Incorrect answer for check question")
             await update.message.reply_text(
                 "❌ Неправильно. Попробуйте еще раз.\n"
-                "Подсказка: внимательно прочитайте материал урока"
+                "Подсказка: внимательно прочитайте материал урока",
+                parse_mode='HTML'
             )
         context.user_data.pop('current_check', None)
         return
@@ -225,7 +263,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(
                         "✅ Правильно! Можете переходить к следующему уроку.\n"
                         "Используйте /lesson для просмотра следующего урока.",
-                        reply_markup=get_main_keyboard()
+                        reply_markup=get_main_keyboard(),
+                        parse_mode='HTML'
                     )
                     logger.info(f"Answer handling (correct) took {time.time() - start_time:.2f} seconds")
                     return
@@ -235,13 +274,15 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error("Failed to update progress")
 
             await update.message.reply_text(
-                "Произошла ошибка при сохранении прогресса. Попробуйте позже."
+                "Произошла ошибка при сохранении прогресса. Попробуйте позже.",
+                parse_mode='HTML'
             )
         else:
             logger.info("Incorrect answer received")
             await update.message.reply_text(
                 "❌ Неправильно. Попробуйте еще раз.\n"
-                f"Подсказка: правильный ответ должен быть одной буквой (A, B или C)"
+                f"Подсказка: правильный ответ должен быть одной буквой (A, B или C)",
+                parse_mode='HTML'
             )
 
     logger.info(f"Answer handling took {time.time() - start_time:.2f} seconds")
@@ -290,20 +331,21 @@ async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Начните обучение! Используйте /lesson для перехода к первому уроку."
         )
 
-    await update.message.reply_text(progress_text)
+    await update.message.reply_text(progress_text, parse_mode='HTML')
     logger.info(f"Progress handling took {time.time() - start_time:.2f} seconds")
 
 async def handle_explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик объяснений."""
     if not context.args:
         await update.message.reply_text(
-            "Пожалуйста, укажите тему после команды /explain"
+            "Пожалуйста, укажите тему после команды /explain",
+            parse_mode='HTML'
         )
         return
 
     topic = " ".join(context.args)
     explanation = get_ml_explanation(topic)
-    await update.message.reply_text(explanation)
+    await update.message.reply_text(explanation, parse_mode='HTML')
 
     if "❓" in explanation:
         context.user_data['last_explanation'] = topic
@@ -320,26 +362,29 @@ async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"📚 {data['history']}\n\n"
             f"❓ Тест на понимание:\n{data['question']}\n\n"
-            "Выберите ответ (A, B или C):"
+            "Выберите ответ (A, B или C):",
+            parse_mode='HTML'
         )
     except Exception as e:
         logger.error(f"Error parsing history data: {str(e)}")
         await update.message.reply_text(
             "😔 Извините, произошла ошибка при получении исторической справки.\n"
             "Попробуйте позже.\n\n"
-            "❓ Если проблема повторяется, обращайтесь к @raddayurieva"
+            "❓ Если проблема повторяется, обращайтесь к @raddayurieva",
+            parse_mode='HTML'
         )
 
 async def handle_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
-            "Пожалуйста, укажите ваш вопрос после команды /ask"
+            "Пожалуйста, укажите ваш вопрос после команды /ask",
+            parse_mode='HTML'
         )
         return
 
     question = " ".join(context.args)
     answer = analyze_ml_question(question)
-    await update.message.reply_text(answer)
+    await update.message.reply_text(answer, parse_mode='HTML')
 
 
 async def handle_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -351,7 +396,8 @@ async def handle_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(concept) > 100:
             await update.message.reply_text(
                 "😅 Тема слишком длинная. Пожалуйста, сократите её до 100 символов.\n\n"
-                "❓ Если нужна помощь, обращайтесь к @raddayurieva"
+                "❓ Если нужна помощь, обращайтесь к @raddayurieva",
+                parse_mode='HTML'
             )
             return
 
@@ -359,13 +405,15 @@ async def handle_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if any(char in concept for char in ['@', '#', '$', '%', '&', '*', '<', '>', '/']):
             await update.message.reply_text(
                 "😅 Пожалуйста, используйте только буквы, цифры и простые знаки препинания в теме.\n\n"
-                "❓ Если нужна помощь, обращайтесь к @raddayurieva"
+                "❓ Если нужна помощь, обращайтесь к @raddayurieva",
+                parse_mode='HTML'
             )
             return
 
     await update.message.reply_text(
         "🎨 Генерирую мем" + (f" про {concept}" if concept else "") + "...\n"
-        "Это может занять несколько секунд."
+        "Это может занять несколько секунд.",
+        parse_mode='HTML'
     )
 
     try:
@@ -376,7 +424,8 @@ async def handle_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption="🤖 Ваш мем о машинном обучении!" + 
                        (f"\nТема: {concept}" if concept else "") +
                        "\n\n💡 Используйте команду /meme [тема] для генерации мема на конкретную тему" +
-                       "\n❓ Есть вопросы? Обращайтесь к @raddayurieva"
+                       "\n❓ Есть вопросы? Обращайтесь к @raddayurieva",
+                parse_mode='HTML'
             )
         else:
             await update.message.reply_text(
@@ -384,14 +433,16 @@ async def handle_meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ("Возможно, стоит попробовать другую тему или " if concept else "") +
                 "повторить попытку позже.\n\n"
                 "❓ Есть вопросы или нужна помощь?\n"
-                "Обращайтесь к @raddayurieva"
+                "Обращайтесь к @raddayurieva",
+                parse_mode='HTML'
             )
     except Exception as e:
         logger.error(f"Error in handle_meme: {str(e)}")
         await update.message.reply_text(
             "😔 Произошла ошибка при генерации мема. "
             "Пожалуйста, попробуйте позже.\n\n"
-            "❓ Если проблема повторяется, обращайтесь к @raddayurieva"
+            "❓ Если проблема повторяется, обращайтесь к @raddayurieva",
+            parse_mode='HTML'
         )
 
 
@@ -401,7 +452,8 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ADMIN_ID = int(os.environ.get("ADMIN_TELEGRAM_ID", "0"))
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text(
-            "❌ У вас нет доступа к этой команде."
+            "❌ У вас нет доступа к этой команде.",
+            parse_mode='HTML'
         )
         return
 
@@ -409,7 +461,8 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not all_stats:
         await update.message.reply_text(
-            "📊 Статистика пока недоступна."
+            "📊 Статистика пока недоступна.",
+            parse_mode='HTML'
         )
         return
 
@@ -431,7 +484,8 @@ async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     MAX_MESSAGE_LENGTH = 4096
     for i in range(0, len(stats_message), MAX_MESSAGE_LENGTH):
         await update.message.reply_text(
-            stats_message[i:i + MAX_MESSAGE_LENGTH]
+            stats_message[i:i + MAX_MESSAGE_LENGTH],
+            parse_mode='HTML'
         )
 
 async def handle_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -441,14 +495,16 @@ async def handle_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text(
-            "❌ У вас нет доступа к этой команде."
+            "❌ У вас нет доступа к этой команде.",
+            parse_mode='HTML'
         )
         return
 
     if not context.args:
         await update.message.reply_text(
             "Укажите ID пользователя после команды.\n"
-            "Пример: /user_stats 123456789"
+            "Пример: /user_stats 123456789",
+            parse_mode='HTML'
         )
         return
 
@@ -458,7 +514,8 @@ async def handle_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not stats:
             await update.message.reply_text(
-                "❌ Пользователь не найден или статистика недоступна."
+                "❌ Пользователь не найден или статистика недоступна.",
+                parse_mode='HTML'
             )
             return
 
@@ -473,15 +530,17 @@ async def handle_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🕒 Последняя активность: {stats['last_activity'].strftime('%Y-%m-%d %H:%M')}"
         )
 
-        await update.message.reply_text(stats_message)
+        await update.message.reply_text(stats_message, parse_mode='HTML')
 
     except ValueError:
         await update.message.reply_text(
             "❌ Некорректный ID пользователя.\n"
-            "Используйте только цифры."
+            "Используйте только цифры.",
+            parse_mode='HTML'
         )
     except Exception as e:
         logger.error(f"Error in handle_user_stats: {str(e)}")
         await update.message.reply_text(
-            "❌ Произошла ошибка при получении статистики."
+            "❌ Произошла ошибка при получении статистики.",
+            parse_mode='HTML'
         )

@@ -42,10 +42,20 @@ def get_or_create_user(telegram_id: int, username: str = None) -> Optional[User]
         try:
             user = session.query(User).filter_by(telegram_id=telegram_id).first()
             if not user:
+                # First create and flush the user to get the ID
                 user = User(telegram_id=telegram_id, username=username, current_lesson=1)
                 session.add(user)
-                # Создаем статистику для нового пользователя
-                stats = UserStatistics(user_id=user.id)
+                session.flush()
+
+                # Now create statistics with the user's ID
+                stats = UserStatistics(
+                    user_id=user.id,
+                    total_time_spent=0,
+                    average_score=0.0,
+                    completed_lessons=0,
+                    total_attempts=0,
+                    last_activity=datetime.utcnow()
+                )
                 session.add(stats)
                 session.commit()
                 logger.info(f"Created new user with telegram_id {telegram_id}")
@@ -53,6 +63,7 @@ def get_or_create_user(telegram_id: int, username: str = None) -> Optional[User]
             return user
         except SQLAlchemyError as e:
             logger.error(f"Database error in get_or_create_user: {str(e)}")
+            session.rollback()
             return None
 
 def start_lesson_attempt(user_id: int, lesson_id: int) -> Optional[LessonAttempt]:

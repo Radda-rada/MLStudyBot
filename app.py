@@ -49,7 +49,9 @@ def init_db():
         import models  # noqa: F401
         from content.lessons import LESSONS
         from content.quizzes import QUIZZES
-        from models import Lesson, Quiz
+        from models import Lesson, Quiz, User, Progress, UserStatistics
+
+        logger.info("Starting database initialization...")
 
         # Create tables if they don't exist
         Base.metadata.create_all(engine)
@@ -57,13 +59,14 @@ def init_db():
 
         session = get_session()
         try:
-            # Check existing lessons and quizzes
-            existing_lessons = set(lesson.id for lesson in session.query(Lesson).all())
-            existing_quizzes = set(quiz.lesson_id for quiz in session.query(Quiz).all())
+            # Check if we need to initialize data
+            existing_lessons = session.query(Lesson).count()
+            existing_quizzes = session.query(Quiz).count()
 
-            # Add or update lessons
-            for lesson_id, lesson_data in LESSONS.items():
-                if lesson_id not in existing_lessons:
+            if existing_lessons == 0:
+                logger.info("No lessons found, initializing lesson data...")
+                # Add or update lessons
+                for lesson_id, lesson_data in LESSONS.items():
                     lesson = Lesson(
                         id=lesson_id,
                         title=lesson_data['title'],
@@ -77,9 +80,10 @@ def init_db():
                     session.add(lesson)
                     logger.info(f"Added new lesson: {lesson_id} - {lesson_data['title']}")
 
-            # Add or update quizzes
-            for quiz_id, quiz_data in QUIZZES.items():
-                if quiz_id not in existing_quizzes:
+            if existing_quizzes == 0:
+                logger.info("No quizzes found, initializing quiz data...")
+                # Add or update quizzes
+                for quiz_id, quiz_data in QUIZZES.items():
                     quiz = Quiz(
                         lesson_id=quiz_id,
                         title=quiz_data['title'],
@@ -93,21 +97,21 @@ def init_db():
             session.commit()
             logger.info("Database initialization completed successfully")
 
-            # Log table statistics using SQLAlchemy text()
+            # Log table statistics
             inspector = inspect(engine)
             for table_name in inspector.get_table_names():
                 result = session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
                 logger.info(f"Table {table_name} contains {result} records")
 
         except Exception as e:
-            logger.error(f"Error during database initialization: {e}")
+            logger.error(f"Error during database initialization: {str(e)}", exc_info=True)
             session.rollback()
             raise
         finally:
             session.close()
 
     except Exception as e:
-        logger.error(f"Critical error during database setup: {e}")
+        logger.error(f"Critical error during database setup: {str(e)}", exc_info=True)
         raise
 
 # Initialize the database

@@ -3,15 +3,19 @@ import logging
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from bot.handlers import (
     start, help_command, handle_lesson, handle_quiz,
-    handle_progress, handle_answer, handle_ask, handle_explain
+    handle_progress, handle_answer, handle_ask, handle_explain,
+    handle_history, handle_meme
 )
-from app import app
+from app import init_db
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 def main():
+    # Initialize database
+    init_db()
+
     # Initialize the bot
     application = ApplicationBuilder().token(os.environ.get("TELEGRAM_BOT_TOKEN")).build()
 
@@ -23,6 +27,8 @@ def main():
     application.add_handler(CommandHandler("progress", handle_progress))
     application.add_handler(CommandHandler("ask", handle_ask))
     application.add_handler(CommandHandler("explain", handle_explain))
+    application.add_handler(CommandHandler("history", handle_history))
+    application.add_handler(CommandHandler("meme", handle_meme))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer))
 
     # Start the bot

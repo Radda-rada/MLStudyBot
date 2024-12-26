@@ -35,18 +35,21 @@ def get_or_create_user(telegram_id: int, username: str = None) -> Optional[User]
     # Try to get from cache first
     user = get_cached_user(telegram_id)
     if user:
+        logger.info(f"Found cached user: {user.id}, current_lesson: {user.current_lesson}")
         return user
 
     with session_scope() as session:
         try:
             user = session.query(User).filter_by(telegram_id=telegram_id).first()
             if not user:
-                user = User(telegram_id=telegram_id, username=username)
+                user = User(telegram_id=telegram_id, username=username, current_lesson=1)
                 session.add(user)
                 session.commit()
-                logger.info(f"Created new user with telegram_id {telegram_id}")
+                logger.info(f"Created new user with telegram_id {telegram_id}, current_lesson: 1")
                 # Update cache
                 get_cached_user.cache_clear()
+            else:
+                logger.info(f"Found existing user: {user.id}, current_lesson: {user.current_lesson}")
             return user
         except SQLAlchemyError as e:
             logger.error(f"Database error in get_or_create_user: {str(e)}")
@@ -101,16 +104,36 @@ def update_user_lesson(user_id: int, new_lesson: int) -> bool:
     """Update user's current lesson with improved error handling."""
     with session_scope() as session:
         try:
+            # Explicitly flush the session to ensure we have the latest data
+            session.flush()
+
+            # Get user with explicit refresh
             user = session.query(User).get(user_id)
+            session.refresh(user)
+
             if user:
+                old_lesson = user.current_lesson
+                logger.info(f"Updating lesson for user {user_id} from {old_lesson} to {new_lesson}")
+
+                # Update the lesson
                 user.current_lesson = new_lesson
                 session.commit()
-                # Clear cache
+
+                # Clear cache to ensure fresh data
                 get_cached_user.cache_clear()
-                logger.info(f"Updated lesson to {new_lesson} for user {user_id}")
-                return True
+
+                # Verify the update
+                session.refresh(user)
+                if user.current_lesson == new_lesson:
+                    logger.info(f"Successfully updated lesson to {new_lesson} for user {user_id}")
+                    return True
+                else:
+                    logger.error(f"Lesson update verification failed for user {user_id}")
+                    return False
+
             logger.warning(f"User {user_id} not found")
             return False
+
         except SQLAlchemyError as e:
             logger.error(f"Database error in update_user_lesson: {str(e)}")
             return False

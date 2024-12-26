@@ -94,8 +94,30 @@ async def handle_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Формируем сообщение с уроком, вопросом и материалами
+    lesson_message = (
+        f"📖 Урок {user.current_lesson}: {lesson['title']}\n\n"
+        f"{lesson['content']}\n\n"
+        f"❓ Проверочный вопрос:\n"
+        f"{lesson['check_question']}\n\n"
+    )
+
+    # Добавляем варианты ответов
+    for option in lesson['check_options']:
+        lesson_message += f"{option}\n"
+
+    lesson_message += "\n📚 Дополнительные материалы:\n"
+    for material in lesson['materials']:
+        lesson_message += f"{material}\n"
+
+    # Сохраняем информацию о текущем вопросе в контексте
+    context.user_data['current_check'] = {
+        'lesson_id': user.current_lesson,
+        'correct_answer': lesson['check_correct']
+    }
+
     await update.message.reply_text(
-        f"📖 Урок {user.current_lesson}: {lesson['title']}\n\n{lesson['content']}",
+        lesson_message,
         reply_markup=get_lesson_keyboard()
     )
     logger.info(f"Lesson handling took {time.time() - start_time:.2f} seconds")
@@ -117,7 +139,15 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет доступных тестов.")
         return
 
-    context.user_data['current_quiz'] = quiz
+    # Сохраняем текущий тест в контексте пользователя
+    context.user_data['current_quiz'] = {
+        'quiz_id': user.current_lesson,
+        'correct_answer': quiz['correct_answer'],
+        'title': quiz['title']
+    }
+
+    logger.info(f"Setting quiz for user {user.id}, lesson {user.current_lesson}")
+
     await update.message.reply_text(
         f"❓ Тест по теме {quiz['title']}\n\n{quiz['question']}"
     )
@@ -126,46 +156,92 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик ответов."""
     start_time = time.time()
+    logger.info("Starting handle_answer")
 
     user = await asyncio.to_thread(
         get_or_create_user,
         telegram_id=update.effective_user.id
     )
     if not user:
+        logger.error("Failed to get or create user")
         return
 
     answer = update.message.text.upper()
-    quiz = context.user_data.get('current_quiz')
 
-    if not quiz:
+    # Проверяем, есть ли текущий тест или проверочный вопрос
+    current_quiz = context.user_data.get('current_quiz')
+    current_check = context.user_data.get('current_check')
+
+    logger.info(f"Processing answer: {answer} for quiz: {current_quiz}, check: {current_check}")
+
+    if current_check:
+        # Обработка ответа на проверочный вопрос
+        if answer == current_check['correct_answer']:
+            logger.info(f"Correct answer received for check question, lesson {current_check['lesson_id']}")
+            await update.message.reply_text(
+                "✅ Правильно! Теперь вы можете пройти тест к этому уроку.\n"
+                "Используйте команду /quiz для начала тестирования.",
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            logger.info("Incorrect answer for check question")
+            await update.message.reply_text(
+                "❌ Неправильно. Попробуйте еще раз.\n"
+                "Подсказка: внимательно прочитайте материал урока"
+            )
+        context.user_data.pop('current_check', None)
         return
 
-    if answer == quiz['correct_answer']:
-        # Асинхронно обновляем прогресс
-        success = await asyncio.to_thread(
-            update_progress,
-            user.id,
-            user.current_lesson,
-            100
-        )
-        if success:
-            lesson_updated = await asyncio.to_thread(
-                update_user_lesson,
+    if current_quiz:
+        # Обработка ответа на тест
+        if answer == current_quiz['correct_answer']:
+            logger.info(f"Correct answer received for quiz {current_quiz['quiz_id']}")
+
+            # Асинхронно обновляем прогресс
+            success = await asyncio.to_thread(
+                update_progress,
                 user.id,
-                user.current_lesson + 1
+                current_quiz['quiz_id'],
+                100
             )
-            if lesson_updated:
-                await update.message.reply_text(
-                    "✅ Правильно! Можете переходить к следующему уроку.",
-                    reply_markup=get_main_keyboard()
+
+            if success:
+                logger.info(f"Progress updated for user {user.id}, lesson {current_quiz['quiz_id']}")
+                next_lesson = current_quiz['quiz_id'] + 1
+
+                # Обновляем урок пользователя
+                lesson_updated = await asyncio.to_thread(
+                    update_user_lesson,
+                    user.id,
+                    next_lesson
                 )
-                logger.info(f"Answer handling (correct) took {time.time() - start_time:.2f} seconds")
-                return
-        await update.message.reply_text(
-            "Произошла ошибка при сохранении прогресса. Попробуйте позже."
-        )
-    else:
-        await update.message.reply_text("❌ Неправильно. Попробуйте еще раз.")
+
+                if lesson_updated:
+                    logger.info(f"User lesson updated to {next_lesson}")
+                    # Очищаем текущий тест из контекста
+                    context.user_data.pop('current_quiz', None)
+
+                    await update.message.reply_text(
+                        "✅ Правильно! Можете переходить к следующему уроку.\n"
+                        "Используйте /lesson для просмотра следующего урока.",
+                        reply_markup=get_main_keyboard()
+                    )
+                    logger.info(f"Answer handling (correct) took {time.time() - start_time:.2f} seconds")
+                    return
+                else:
+                    logger.error(f"Failed to update user lesson to {next_lesson}")
+            else:
+                logger.error("Failed to update progress")
+
+            await update.message.reply_text(
+                "Произошла ошибка при сохранении прогресса. Попробуйте позже."
+            )
+        else:
+            logger.info("Incorrect answer received")
+            await update.message.reply_text(
+                "❌ Неправильно. Попробуйте еще раз.\n"
+                f"Подсказка: правильный ответ должен быть одной буквой (A, B или C)"
+            )
 
     logger.info(f"Answer handling took {time.time() - start_time:.2f} seconds")
 
@@ -231,32 +307,6 @@ async def handle_explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "❓" in explanation:
         context.user_data['last_explanation'] = topic
         context.user_data['last_question'] = explanation.split("❓")[-1].strip()
-
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Оптимизированный обработчик ответов."""
-    user = await asyncio.to_thread(
-        get_or_create_user,
-        telegram_id=update.effective_user.id
-    )
-    if not user:
-        return
-
-    answer = update.message.text.upper()
-    quiz = context.user_data.get('current_quiz')
-
-    if quiz and answer == quiz['correct_answer']:
-        if update_progress(user.id, user.current_lesson, 100):
-            if update_user_lesson(user.id, user.current_lesson + 1):
-                await update.message.reply_text(
-                    "✅ Правильно! Можете переходить к следующему уроку.",
-                    reply_markup=get_main_keyboard()
-                )
-                return
-        await update.message.reply_text(
-            "Произошла ошибка при сохранении прогресса. Попробуйте позже."
-        )
-    elif quiz:
-        await update.message.reply_text("❌ Неправильно. Попробуйте еще раз.")
 
 async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /history command to show random ML history facts."""

@@ -11,13 +11,27 @@ from utils.db_utils import (
 )
 from bot.ai_helper import get_ml_explanation, analyze_ml_question, generate_ml_meme, get_random_ml_history
 import time
+import asyncio
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
+
+# Кэш для хранения последних ответов
+@lru_cache(maxsize=100)
+def get_cached_lesson(lesson_id: int):
+    return LESSONS.get(lesson_id)
+
+@lru_cache(maxsize=100)
+def get_cached_quiz(quiz_id: int):
+    return QUIZZES.get(quiz_id)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик команды start."""
     start_time = time.time()
-    user = get_or_create_user(
+
+    # Асинхронно получаем или создаем пользователя
+    user = await asyncio.to_thread(
+        get_or_create_user,
         telegram_id=update.effective_user.id,
         username=update.effective_user.username
     )
@@ -63,12 +77,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик уроков."""
-    user = get_or_create_user(telegram_id=update.effective_user.id)
+    start_time = time.time()
+
+    user = await asyncio.to_thread(
+        get_or_create_user,
+        telegram_id=update.effective_user.id
+    )
     if not user:
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
         return
 
-    lesson = LESSONS.get(user.current_lesson)
+    lesson = get_cached_lesson(user.current_lesson)
     if not lesson:
         await update.message.reply_text(
             "Поздравляем! Вы прошли все уроки! 🎉"
@@ -79,15 +98,21 @@ async def handle_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📖 Урок {user.current_lesson}: {lesson['title']}\n\n{lesson['content']}",
         reply_markup=get_lesson_keyboard()
     )
+    logger.info(f"Lesson handling took {time.time() - start_time:.2f} seconds")
 
 async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик тестов."""
-    user = get_or_create_user(telegram_id=update.effective_user.id)
+    start_time = time.time()
+
+    user = await asyncio.to_thread(
+        get_or_create_user,
+        telegram_id=update.effective_user.id
+    )
     if not user:
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
         return
 
-    quiz = QUIZZES.get(user.current_lesson)
+    quiz = get_cached_quiz(user.current_lesson)
     if not quiz:
         await update.message.reply_text("Нет доступных тестов.")
         return
@@ -96,15 +121,67 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"❓ Тест по теме {quiz['title']}\n\n{quiz['question']}"
     )
+    logger.info(f"Quiz handling took {time.time() - start_time:.2f} seconds")
+
+async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Оптимизированный обработчик ответов."""
+    start_time = time.time()
+
+    user = await asyncio.to_thread(
+        get_or_create_user,
+        telegram_id=update.effective_user.id
+    )
+    if not user:
+        return
+
+    answer = update.message.text.upper()
+    quiz = context.user_data.get('current_quiz')
+
+    if not quiz:
+        return
+
+    if answer == quiz['correct_answer']:
+        # Асинхронно обновляем прогресс
+        success = await asyncio.to_thread(
+            update_progress,
+            user.id,
+            user.current_lesson,
+            100
+        )
+        if success:
+            lesson_updated = await asyncio.to_thread(
+                update_user_lesson,
+                user.id,
+                user.current_lesson + 1
+            )
+            if lesson_updated:
+                await update.message.reply_text(
+                    "✅ Правильно! Можете переходить к следующему уроку.",
+                    reply_markup=get_main_keyboard()
+                )
+                logger.info(f"Answer handling (correct) took {time.time() - start_time:.2f} seconds")
+                return
+        await update.message.reply_text(
+            "Произошла ошибка при сохранении прогресса. Попробуйте позже."
+        )
+    else:
+        await update.message.reply_text("❌ Неправильно. Попробуйте еще раз.")
+
+    logger.info(f"Answer handling took {time.time() - start_time:.2f} seconds")
 
 async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик прогресса."""
-    user = get_or_create_user(telegram_id=update.effective_user.id)
+    start_time = time.time()
+
+    user = await asyncio.to_thread(
+        get_or_create_user,
+        telegram_id=update.effective_user.id
+    )
     if not user:
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
         return
 
-    progress = get_user_progress(user.id)
+    progress = await asyncio.to_thread(get_user_progress, user.id)
 
     if progress:
         avg_score = sum(p.quiz_score for p in progress) / len(progress)
@@ -123,6 +200,7 @@ async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     await update.message.reply_text(progress_text)
+    logger.info(f"Progress handling took {time.time() - start_time:.2f} seconds")
 
 async def handle_explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик объяснений."""
@@ -142,7 +220,10 @@ async def handle_explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик ответов."""
-    user = get_or_create_user(telegram_id=update.effective_user.id)
+    user = await asyncio.to_thread(
+        get_or_create_user,
+        telegram_id=update.effective_user.id
+    )
     if not user:
         return
 

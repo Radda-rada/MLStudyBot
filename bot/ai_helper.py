@@ -3,10 +3,19 @@ from openai import OpenAI
 import logging
 from functools import lru_cache
 import time
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+# Уменьшаем размеры ответов и добавляем таймауты
+TIMEOUT = 10  # seconds
+MAX_TOKENS = {
+    'explanation': 300,  # было 500
+    'question': 200,    # было 300
+    'history': 300      # было 400
+}
 
 @lru_cache(maxsize=50)
 def get_ml_explanation(topic: str) -> str:
@@ -18,15 +27,16 @@ def get_ml_explanation(topic: str) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": "Вы - опытный преподаватель ML. Объясняйте кратко и по делу. Ответ на русском."
+                    "content": "Кратко объясните ML концепцию. Максимум 2-3 предложения."
                 },
                 {
                     "role": "user",
-                    "content": f"Объясните концепцию: {topic}"
+                    "content": f"Объясните: {topic}"
                 }
             ],
-            max_tokens=500,  # Уменьшаем размер ответа для скорости
-            temperature=0.7
+            max_tokens=MAX_TOKENS['explanation'],
+            temperature=0.5,  # Уменьшаем для более четких ответов
+            timeout=TIMEOUT
         )
         logger.info(f"OpenAI explanation request took {time.time() - start_time:.2f} seconds")
         return response.choices[0].message.content
@@ -44,15 +54,16 @@ def analyze_ml_question(question: str) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": "Вы - эксперт ML. Отвечайте кратко и по делу. Ответ на русском."
+                    "content": "Отвечайте кратко, максимум 2 предложения."
                 },
                 {
                     "role": "user",
                     "content": question
                 }
             ],
-            max_tokens=300,  # Уменьшаем размер ответа для скорости
-            temperature=0.7
+            max_tokens=MAX_TOKENS['question'],
+            temperature=0.5,
+            timeout=TIMEOUT
         )
         logger.info(f"OpenAI question analysis request took {time.time() - start_time:.2f} seconds")
         return response.choices[0].message.content
@@ -60,14 +71,14 @@ def analyze_ml_question(question: str) -> str:
         logger.error(f"Error analyzing ML question: {e}")
         return "Извините, произошла ошибка. Попробуйте позже."
 
-def generate_ml_meme(concept: str = None) -> str:
+def generate_ml_meme(concept: Optional[str] = None) -> Optional[str]:
     """Generate a meme about machine learning using DALL-E."""
     start_time = time.time()
     try:
         prompt = (
-            "Create a simple educational meme about machine learning"
+            "Create a simple, minimalist meme about machine learning"
             if not concept else
-            f"Create a simple educational meme about {concept} in machine learning"
+            f"Create a simple, minimalist meme about {concept} in machine learning"
         )
 
         response = client.images.generate(
@@ -75,7 +86,8 @@ def generate_ml_meme(concept: str = None) -> str:
             prompt=prompt,
             n=1,
             size="1024x1024",
-            quality="standard"  # Используем standard вместо hd для скорости
+            quality="standard",
+            timeout=TIMEOUT
         )
         logger.info(f"OpenAI meme generation request took {time.time() - start_time:.2f} seconds")
         return response.data[0].url if response.data else None
@@ -93,19 +105,26 @@ def get_random_ml_history() -> dict:
             messages=[
                 {
                     "role": "system",
-                    "content": "Создайте короткую историческую справку о ML с тестом."
+                    "content": "Создайте краткую историческую справку о ML с тестом."
                 },
                 {
                     "role": "user",
-                    "content": "Сгенерируйте историческую справку и тестовый вопрос"
+                    "content": "Сгенерируйте короткую историческую справку и тестовый вопрос"
                 }
             ],
             response_format={"type": "json_object"},
-            max_tokens=400,  # Уменьшаем размер ответа для скорости
-            temperature=0.7
+            max_tokens=MAX_TOKENS['history'],
+            temperature=0.5,
+            timeout=TIMEOUT
         )
         logger.info(f"OpenAI history request took {time.time() - start_time:.2f} seconds")
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        return content if isinstance(content, dict) else {
+            "history": "Извините, произошла ошибка.",
+            "question": None,
+            "correct_answer": None,
+            "explanation": None
+        }
     except Exception as e:
         logger.error(f"Error getting ML history: {str(e)}")
         return {

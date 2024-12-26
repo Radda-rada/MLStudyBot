@@ -1,9 +1,10 @@
 import logging
 import json
-from telegram import Update
+import os
+from telegram import Update, Bot
 from telegram.ext import ContextTypes
 from models import User
-from content.lessons import LESSONS, HISTORY
+from content.lessons import LESSONS
 from content.quizzes import QUIZZES
 from bot.keyboard import get_main_keyboard, get_lesson_keyboard
 from utils.db_utils import (
@@ -14,7 +15,22 @@ from bot.ai_helper import get_ml_explanation, analyze_ml_question, generate_ml_m
 
 logger = logging.getLogger(__name__)
 
+async def set_bot_profile_photo(bot: Bot):
+    """Set bot's profile photo."""
+    try:
+        with open('attached_assets/Иллюстрация_без_названия.jpg', 'rb') as photo:
+            await bot.set_chat_photo(chat_id=bot.id, photo=photo)
+        logger.info("Successfully set bot profile photo")
+    except Exception as e:
+        logger.error(f"Failed to set bot profile photo: {e}")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Set bot profile photo if not already set
+    try:
+        await set_bot_profile_photo(context.bot)
+    except Exception as e:
+        logger.error(f"Error setting bot profile photo: {e}")
+
     user = get_or_create_user(
         telegram_id=update.effective_user.id,
         username=update.effective_user.username

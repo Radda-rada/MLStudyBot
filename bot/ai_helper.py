@@ -89,13 +89,16 @@ def get_random_ml_history() -> dict:
     """Get a random historical fact about machine learning with a test question."""
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4",  # Using GPT-4 for better historical context
             messages=[
                 {
                     "role": "system",
                     "content": "Создайте случайную историческую справку о машинном обучении. "
                     "Включите конкретный год, значимое событие и его влияние на развитие ML. "
-                    "После справки добавьте тестовый вопрос с вариантами ответа (A, B, C). "
+                    "После справки добавьте тестовый вопрос с вариантами ответа (A, B, C) и объяснение правильного ответа. "
+                    "Верните ответ в формате JSON со следующими полями: "
+                    "history (текст справки), question (текст вопроса), "
+                    "correct_answer (A, B или C), explanation (объяснение правильного ответа). "
                     "Ответ должен быть на русском языке."
                 },
                 {

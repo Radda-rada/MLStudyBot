@@ -170,7 +170,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Answer handling took {time.time() - start_time:.2f} seconds")
 
 async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Оптимизированный обработчик прогресса."""
+    """Оптимизированный обработчик прогресса с улучшенным отображением."""
     start_time = time.time()
 
     user = await asyncio.to_thread(
@@ -183,20 +183,34 @@ async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     progress = await asyncio.to_thread(get_user_progress, user.id)
 
+    # Получаем общее количество уроков
+    total_lessons = len(LESSONS)
+    completed_lessons = len([p for p in progress if p.completed]) if progress else 0
+    completion_percentage = (completed_lessons / total_lessons) * 100 if total_lessons > 0 else 0
+
+    # Создаем визуальный индикатор прогресса
+    progress_bar = "▓" * int(completion_percentage / 10) + "░" * (10 - int(completion_percentage / 10))
+
     if progress:
         avg_score = sum(p.quiz_score for p in progress) / len(progress)
         progress_text = (
-            f"📊 Ваш прогресс:\n"
-            f"Текущий урок: {user.current_lesson}\n"
-            f"Пройдено уроков: {len(progress)}\n"
-            f"Средний балл: {avg_score:.1f}"
+            f"📊 Ваш прогресс:\n\n"
+            f"Прогресс курса: [{progress_bar}] {completion_percentage:.1f}%\n\n"
+            f"📚 Текущий урок: {user.current_lesson}/{total_lessons}\n"
+            f"✅ Завершено уроков: {completed_lessons}\n"
+            f"📝 Средний балл: {avg_score:.1f}/100\n\n"
+            f"🎯 Осталось уроков: {total_lessons - completed_lessons}\n\n"
+            f"Продолжайте обучение! Используйте /lesson для перехода к следующему уроку."
         )
     else:
         progress_text = (
-            f"📊 Ваш прогресс:\n"
-            f"Текущий урок: {user.current_lesson}\n"
-            f"Пройдено уроков: 0\n"
-            f"Средний балл: 0.0"
+            f"📊 Ваш прогресс:\n\n"
+            f"Прогресс курса: [░░░░░░░░░░] 0%\n\n"
+            f"📚 Текущий урок: 1/{total_lessons}\n"
+            f"✅ Завершено уроков: 0\n"
+            f"📝 Средний балл: 0.0/100\n\n"
+            f"🎯 Осталось уроков: {total_lessons}\n\n"
+            f"Начните обучение! Используйте /lesson для перехода к первому уроку."
         )
 
     await update.message.reply_text(progress_text)

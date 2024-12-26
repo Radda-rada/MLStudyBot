@@ -19,10 +19,15 @@ async def set_bot_profile_photo(bot: Bot):
     """Set bot's profile photo."""
     try:
         with open('attached_assets/Иллюстрация_без_названия.jpg', 'rb') as photo:
-            await bot.set_chat_photo(chat_id=bot.id, photo=photo)
+            await bot.set_profile_photo(photo=photo)
         logger.info("Successfully set bot profile photo")
     except Exception as e:
         logger.error(f"Failed to set bot profile photo: {e}")
+        # Add more detailed error logging
+        if hasattr(e, 'message'):
+            logger.error(f"Error message: {e.message}")
+        if hasattr(e, 'response'):
+            logger.error(f"Response: {e.response}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Set bot profile photo if not already set
@@ -103,12 +108,14 @@ async def handle_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz command and verify user progress."""
     user = get_or_create_user(telegram_id=update.effective_user.id)
     if not user:
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
         return
 
     quiz = QUIZZES.get(user.current_lesson)
+    logger.info(f"Getting quiz for user {user.id}, lesson {user.current_lesson}")
 
     if quiz:
         context.user_data['current_quiz'] = quiz
@@ -186,12 +193,42 @@ async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle user answers with improved error handling and logging."""
     user = get_or_create_user(telegram_id=update.effective_user.id)
     if not user:
+        logger.error(f"Failed to get/create user for telegram_id: {update.effective_user.id}")
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
         return
 
     answer = update.message.text.upper()
+    logger.info(f"Received answer '{answer}' from user {user.id}")
+
+    # Handle quiz answers
+    quiz = context.user_data.get('current_quiz')
+    if quiz and answer == quiz['correct_answer']:
+        logger.info(f"Correct answer from user {user.id} for lesson {user.current_lesson}")
+        if update_progress(user.id, user.current_lesson, 100):
+            if update_user_lesson(user.id, user.current_lesson + 1):
+                await update.message.reply_text(
+                    "✅ Правильно! Можете переходить к следующему уроку.",
+                    reply_markup=get_main_keyboard()
+                )
+                logger.info(f"Updated lesson progress for user {user.id}")
+            else:
+                logger.error(f"Failed to update lesson for user {user.id}")
+                await update.message.reply_text(
+                    "Произошла ошибка при обновлении урока. Попробуйте позже."
+                )
+        else:
+            logger.error(f"Failed to update progress for user {user.id}")
+            await update.message.reply_text(
+                "Произошла ошибка при сохранении прогресса. Попробуйте позже."
+            )
+    elif quiz:
+        logger.info(f"Incorrect answer from user {user.id} for lesson {user.current_lesson}")
+        await update.message.reply_text(
+            "❌ Неправильно. Попробуйте еще раз."
+        )
 
     # Handle history test answers
     if 'current_history_test' in context.user_data:
@@ -207,28 +244,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         context.user_data.pop('current_history_test')
         return
-
-    # Handle quiz answers
-    quiz = context.user_data.get('current_quiz')
-    if quiz and answer == quiz['correct_answer']:
-        if update_progress(user.id, user.current_lesson, 100):
-            if update_user_lesson(user.id, user.current_lesson + 1):
-                await update.message.reply_text(
-                    "✅ Правильно! Можете переходить к следующему уроку.",
-                    reply_markup=get_main_keyboard()
-                )
-            else:
-                await update.message.reply_text(
-                    "Произошла ошибка при обновлении урока. Попробуйте позже."
-                )
-        else:
-            await update.message.reply_text(
-                "Произошла ошибка при сохранении прогресса. Попробуйте позже."
-            )
-    elif quiz:
-        await update.message.reply_text(
-            "❌ Неправильно. Попробуйте еще раз."
-        )
 
 async def handle_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:

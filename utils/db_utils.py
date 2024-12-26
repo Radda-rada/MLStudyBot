@@ -100,7 +100,7 @@ def complete_lesson_attempt(attempt_id: int, success: bool) -> bool:
             logger.error(f"Error completing lesson attempt: {str(e)}")
             return False
 
-def get_user_statistics(user_id: int) -> Optional[Dict]:
+def get_user_statistics(user_id: int):
     """Get detailed statistics for user."""
     with session_scope() as session:
         try:
@@ -108,7 +108,7 @@ def get_user_statistics(user_id: int) -> Optional[Dict]:
             if not stats:
                 return None
 
-            # Получаем дополнительную информацию
+            # Get additional information
             total_attempts = session.query(func.count(LessonAttempt.id))\
                 .filter_by(user_id=user_id).scalar()
             successful_attempts = session.query(func.count(LessonAttempt.id))\
@@ -127,7 +127,7 @@ def get_user_statistics(user_id: int) -> Optional[Dict]:
             logger.error(f"Error getting user statistics: {str(e)}")
             return None
 
-def get_all_users_statistics() -> List[Dict]:
+def get_all_users_statistics():
     """Get statistics for all users (admin function)."""
     with session_scope() as session:
         try:

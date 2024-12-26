@@ -1,6 +1,6 @@
 import os
 import logging
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.pool import QueuePool
 
@@ -42,73 +42,74 @@ Session = sessionmaker(
 def get_session():
     return Session()
 
-# Create all tables
 def init_db():
+    """Initialize database with improved error handling and data management"""
     try:
-        # Drop all tables first to ensure clean state
-        Base.metadata.drop_all(engine)
-
         # Import models here to avoid circular imports
         import models  # noqa: F401
+        from content.lessons import LESSONS
+        from content.quizzes import QUIZZES
+        from models import Lesson, Quiz
 
-        inspector = inspect(engine)
-        existing_tables = inspector.get_table_names()
-        logger.info(f"Existing tables: {existing_tables}")
-
-        # Create all tables
+        # Create tables if they don't exist
         Base.metadata.create_all(engine)
-        logger.info("Database tables created successfully")
+        logger.info("Database tables created or already exist")
 
-        # Log created tables
-        inspector = inspect(engine)
-        created_tables = inspector.get_table_names()
-        logger.info(f"Tables after creation: {created_tables}")
-
-        # Now create the initial data
         session = get_session()
         try:
-            # Import data from content files
-            from content.lessons import LESSONS
-            from content.quizzes import QUIZZES
-            from models import Lesson, Quiz
+            # Check existing lessons and quizzes
+            existing_lessons = set(lesson.id for lesson in session.query(Lesson).all())
+            existing_quizzes = set(quiz.lesson_id for quiz in session.query(Quiz).all())
 
-            # Add lessons
+            # Add or update lessons
             for lesson_id, lesson_data in LESSONS.items():
-                lesson = Lesson(
-                    id=lesson_id,
-                    title=lesson_data['title'],
-                    content=lesson_data['content'],
-                    check_question=lesson_data['check_question'],
-                    check_options=str(lesson_data['check_options']),
-                    check_correct=lesson_data['check_correct'],
-                    materials=str(lesson_data['materials']),
-                    order=lesson_id
-                )
-                session.add(lesson)
+                if lesson_id not in existing_lessons:
+                    lesson = Lesson(
+                        id=lesson_id,
+                        title=lesson_data['title'],
+                        content=lesson_data['content'],
+                        check_question=lesson_data['check_question'],
+                        check_options=str(lesson_data['check_options']),
+                        check_correct=lesson_data['check_correct'],
+                        materials=str(lesson_data['materials']),
+                        order=lesson_id
+                    )
+                    session.add(lesson)
+                    logger.info(f"Added new lesson: {lesson_id} - {lesson_data['title']}")
 
-            # Add quizzes
+            # Add or update quizzes
             for quiz_id, quiz_data in QUIZZES.items():
-                quiz = Quiz(
-                    lesson_id=quiz_id,
-                    title=quiz_data['title'],
-                    question=quiz_data['question'],
-                    correct_answer=quiz_data['correct_answer'],
-                    explanation=quiz_data['explanation']
-                )
-                session.add(quiz)
+                if quiz_id not in existing_quizzes:
+                    quiz = Quiz(
+                        lesson_id=quiz_id,
+                        title=quiz_data['title'],
+                        question=quiz_data['question'],
+                        correct_answer=quiz_data['correct_answer'],
+                        explanation=quiz_data['explanation']
+                    )
+                    session.add(quiz)
+                    logger.info(f"Added new quiz for lesson: {quiz_id}")
 
             session.commit()
-            logger.info("Initial data loaded successfully")
+            logger.info("Database initialization completed successfully")
+
+            # Log table statistics using SQLAlchemy text()
+            inspector = inspect(engine)
+            for table_name in inspector.get_table_names():
+                result = session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
+                logger.info(f"Table {table_name} contains {result} records")
 
         except Exception as e:
-            logger.error(f"Error loading initial data: {e}")
+            logger.error(f"Error during database initialization: {e}")
             session.rollback()
             raise
         finally:
             session.close()
 
     except Exception as e:
-        logger.error(f"Error creating database tables: {e}")
+        logger.error(f"Critical error during database setup: {e}")
         raise
 
-init_db()
+# Initialize the database
+if __name__ == "__main__":
+    init_db()

@@ -1,9 +1,7 @@
 import logging
 import json
-import os
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import ContextTypes
-from models import User
 from content.lessons import LESSONS
 from content.quizzes import QUIZZES
 from bot.keyboard import get_main_keyboard, get_lesson_keyboard
@@ -12,15 +10,18 @@ from utils.db_utils import (
     update_user_lesson
 )
 from bot.ai_helper import get_ml_explanation, analyze_ml_question, generate_ml_meme, get_random_ml_history
+import time
 
 logger = logging.getLogger(__name__)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Оптимизированный обработчик команды start."""
+    start_time = time.time()
     user = get_or_create_user(
         telegram_id=update.effective_user.id,
         username=update.effective_user.username
     )
+    logger.info(f"User creation/fetch took {time.time() - start_time:.2f} seconds")
 
     if not user:
         await update.message.reply_text(
@@ -34,22 +35,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Базовые концепции\n"
         "- Популярные алгоритмы\n"
         "- Практические примеры\n\n"
-        "Используйте команды:\n"
-        "/lesson - начать урок\n"
-        "/quiz - пройти тест\n"
-        "/progress - посмотреть прогресс\n"
-        "/history - историческая справка\n"
-        "/ask <вопрос> - задать вопрос по ML\n"
-        "/explain <тема> - получить объяснение темы\n"
-        "/meme [тема] - получить мем про ML\n\n"
-        "❓ Есть вопросы или нужна помощь?\n"
-        "Обращайтесь к @raddayurieva"
+        "Используйте меню для навигации"
     )
 
     await update.message.reply_text(
         welcome_message,
         reply_markup=get_main_keyboard()
     )
+    logger.info(f"Total start command took {time.time() - start_time:.2f} seconds")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -69,48 +62,43 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text)
 
 async def handle_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Оптимизированный обработчик уроков."""
     user = get_or_create_user(telegram_id=update.effective_user.id)
     if not user:
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
         return
 
     lesson = LESSONS.get(user.current_lesson)
+    if not lesson:
+        await update.message.reply_text(
+            "Поздравляем! Вы прошли все уроки! 🎉"
+        )
+        return
 
-    if lesson:
-        await update.message.reply_text(
-            f"📖 Урок {user.current_lesson}: {lesson['title']}\n\n{lesson['content']}",
-            reply_markup=get_lesson_keyboard()
-        )
-    else:
-        await update.message.reply_text(
-            "Поздравляем! Вы прошли все уроки! 🎉\n\n"
-            "❓ Есть вопросы или нужна помощь?\n"
-            "Обращайтесь к @raddayurieva"
-        )
+    await update.message.reply_text(
+        f"📖 Урок {user.current_lesson}: {lesson['title']}\n\n{lesson['content']}",
+        reply_markup=get_lesson_keyboard()
+    )
 
 async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz command and verify user progress."""
+    """Оптимизированный обработчик тестов."""
     user = get_or_create_user(telegram_id=update.effective_user.id)
     if not user:
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
         return
 
     quiz = QUIZZES.get(user.current_lesson)
-    logger.info(f"Getting quiz for user {user.id}, lesson {user.current_lesson}")
+    if not quiz:
+        await update.message.reply_text("Нет доступных тестов.")
+        return
 
-    if quiz:
-        context.user_data['current_quiz'] = quiz
-        await update.message.reply_text(
-            f"❓ Тест по теме {quiz['title']}\n\n{quiz['question']}"
-        )
-    else:
-        await update.message.reply_text(
-            "Нет доступных тестов.\n\n"
-            "❓ Есть вопросы или нужна помощь?\n"
-            "Обращайтесь к @raddayurieva"
-        )
+    context.user_data['current_quiz'] = quiz
+    await update.message.reply_text(
+        f"❓ Тест по теме {quiz['title']}\n\n{quiz['question']}"
+    )
 
 async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Оптимизированный обработчик прогресса."""
     user = get_or_create_user(telegram_id=update.effective_user.id)
     if not user:
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
@@ -119,11 +107,12 @@ async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     progress = get_user_progress(user.id)
 
     if progress:
+        avg_score = sum(p.quiz_score for p in progress) / len(progress)
         progress_text = (
             f"📊 Ваш прогресс:\n"
             f"Текущий урок: {user.current_lesson}\n"
             f"Пройдено уроков: {len(progress)}\n"
-            f"Средний балл: {sum([p.quiz_score for p in progress])/len(progress):.1f}"
+            f"Средний балл: {avg_score:.1f}"
         )
     else:
         progress_text = (
@@ -136,6 +125,7 @@ async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(progress_text)
 
 async def handle_explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Оптимизированный обработчик объяснений."""
     if not context.args:
         await update.message.reply_text(
             "Пожалуйста, укажите тему после команды /explain"
@@ -146,11 +136,32 @@ async def handle_explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     explanation = get_ml_explanation(topic)
     await update.message.reply_text(explanation)
 
-    # Add the test question to context for later verification
     if "❓" in explanation:
-        question_part = explanation.split("❓")[-1].strip()
         context.user_data['last_explanation'] = topic
-        context.user_data['last_question'] = question_part
+        context.user_data['last_question'] = explanation.split("❓")[-1].strip()
+
+async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Оптимизированный обработчик ответов."""
+    user = get_or_create_user(telegram_id=update.effective_user.id)
+    if not user:
+        return
+
+    answer = update.message.text.upper()
+    quiz = context.user_data.get('current_quiz')
+
+    if quiz and answer == quiz['correct_answer']:
+        if update_progress(user.id, user.current_lesson, 100):
+            if update_user_lesson(user.id, user.current_lesson + 1):
+                await update.message.reply_text(
+                    "✅ Правильно! Можете переходить к следующему уроку.",
+                    reply_markup=get_main_keyboard()
+                )
+                return
+        await update.message.reply_text(
+            "Произошла ошибка при сохранении прогресса. Попробуйте позже."
+        )
+    elif quiz:
+        await update.message.reply_text("❌ Неправильно. Попробуйте еще раз.")
 
 async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /history command to show random ML history facts."""
@@ -172,59 +183,6 @@ async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Попробуйте позже.\n\n"
             "❓ Если проблема повторяется, обращайтесь к @raddayurieva"
         )
-
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle user answers with improved error handling and logging."""
-    user = get_or_create_user(telegram_id=update.effective_user.id)
-    if not user:
-        logger.error(f"Failed to get/create user for telegram_id: {update.effective_user.id}")
-        await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
-        return
-
-    answer = update.message.text.upper()
-    logger.info(f"Received answer '{answer}' from user {user.id}")
-
-    # Handle quiz answers
-    quiz = context.user_data.get('current_quiz')
-    if quiz and answer == quiz['correct_answer']:
-        logger.info(f"Correct answer from user {user.id} for lesson {user.current_lesson}")
-        if update_progress(user.id, user.current_lesson, 100):
-            if update_user_lesson(user.id, user.current_lesson + 1):
-                await update.message.reply_text(
-                    "✅ Правильно! Можете переходить к следующему уроку.",
-                    reply_markup=get_main_keyboard()
-                )
-                logger.info(f"Updated lesson progress for user {user.id}")
-            else:
-                logger.error(f"Failed to update lesson for user {user.id}")
-                await update.message.reply_text(
-                    "Произошла ошибка при обновлении урока. Попробуйте позже."
-                )
-        else:
-            logger.error(f"Failed to update progress for user {user.id}")
-            await update.message.reply_text(
-                "Произошла ошибка при сохранении прогресса. Попробуйте позже."
-            )
-    elif quiz:
-        logger.info(f"Incorrect answer from user {user.id} for lesson {user.current_lesson}")
-        await update.message.reply_text(
-            "❌ Неправильно. Попробуйте еще раз."
-        )
-
-    # Handle history test answers
-    if 'current_history_test' in context.user_data:
-        test_data = context.user_data['current_history_test']
-        if answer == test_data['correct_answer']:
-            await update.message.reply_text(
-                "✅ Правильно! Вы хорошо усвоили материал."
-            )
-        else:
-            await update.message.reply_text(
-                f"❌ Неправильно. Вот объяснение:\n\n{test_data['explanation']}\n\n"
-                "Попробуйте ещё раз с новой исторической справкой: /history"
-            )
-        context.user_data.pop('current_history_test')
-        return
 
 async def handle_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:

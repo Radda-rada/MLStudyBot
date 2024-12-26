@@ -2,6 +2,7 @@ import os
 import logging
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.pool import QueuePool
 
 # Configure logging
 logging.basicConfig(
@@ -21,15 +22,21 @@ def get_database_url():
     logger.info(f"Using database URL: {db_url}")
     return db_url
 
-# Create database engine
+# Create database engine with optimized pool settings
 engine = create_engine(
     get_database_url(),
+    poolclass=QueuePool,
+    pool_size=10,
+    max_overflow=20,
     pool_pre_ping=True,
     pool_recycle=300,
 )
 
-# Create session factory
-Session = sessionmaker(bind=engine)
+# Create session factory with optimized settings
+Session = sessionmaker(
+    bind=engine,
+    expire_on_commit=False,  # Prevent unnecessary DB queries
+)
 
 # Function to get a new session
 def get_session():

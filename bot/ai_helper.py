@@ -1,105 +1,99 @@
 import os
 from openai import OpenAI
 import logging
+from functools import lru_cache
+import time
 
 logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+@lru_cache(maxsize=50)
 def get_ml_explanation(topic: str) -> str:
     """Get an explanation of a machine learning concept using GPT."""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",  # Using GPT-4 for better ML explanations
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Вы - опытный преподаватель машинного обучения. "
-                    "Объясняйте концепции просто и понятно, с примерами из реальной жизни. "
-                    "Используйте эмодзи для лучшего восприятия. "
-                    "Ответ должен быть на русском языке. "
-                    "После объяснения добавьте один вопрос для проверки понимания материала."
-                },
-                {
-                    "role": "user",
-                    "content": f"Объясните концепцию: {topic}"
-                }
-            ],
-            max_tokens=1000
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Error getting ML explanation: {e}")
-        return "Извините, произошла ошибка при получении объяснения. Попробуйте позже."
-
-def analyze_ml_question(question: str) -> str:
-    """Analyze and answer a question about machine learning."""
+    start_time = time.time()
     try:
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {
                     "role": "system",
-                    "content": "Вы - эксперт по машинному обучению. "
-                    "Отвечайте на вопросы детально, но доступно. "
-                    "Если вопрос не связан с ML, вежливо укажите на это. "
-                    "Используйте эмодзи для лучшего восприятия. "
-                    "Ответ должен быть на русском языке."
+                    "content": "Вы - опытный преподаватель ML. Объясняйте кратко и по делу. Ответ на русском."
+                },
+                {
+                    "role": "user",
+                    "content": f"Объясните концепцию: {topic}"
+                }
+            ],
+            max_tokens=500,  # Уменьшаем размер ответа для скорости
+            temperature=0.7
+        )
+        logger.info(f"OpenAI explanation request took {time.time() - start_time:.2f} seconds")
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error getting ML explanation: {e}")
+        return "Извините, произошла ошибка. Попробуйте позже."
+
+@lru_cache(maxsize=50)
+def analyze_ml_question(question: str) -> str:
+    """Analyze and answer a question about machine learning."""
+    start_time = time.time()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Вы - эксперт ML. Отвечайте кратко и по делу. Ответ на русском."
                 },
                 {
                     "role": "user",
                     "content": question
                 }
             ],
-            max_tokens=1000
+            max_tokens=300,  # Уменьшаем размер ответа для скорости
+            temperature=0.7
         )
+        logger.info(f"OpenAI question analysis request took {time.time() - start_time:.2f} seconds")
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"Error analyzing ML question: {e}")
-        return "Извините, произошла ошибка при анализе вопроса. Попробуйте позже."
+        return "Извините, произошла ошибка. Попробуйте позже."
 
 def generate_ml_meme(concept: str = None) -> str:
     """Generate a meme about machine learning using DALL-E."""
+    start_time = time.time()
     try:
         prompt = (
-            "Create a funny educational meme about machine learning" if not concept
-            else f"Create a funny educational meme about {concept} in machine learning"
+            "Create a simple educational meme about machine learning"
+            if not concept else
+            f"Create a simple educational meme about {concept} in machine learning"
         )
-        prompt += ", with text overlays in English, in the style of modern internet memes, use simple but humorous tech explanations, keep it educational and witty"
 
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,
             n=1,
             size="1024x1024",
-            quality="standard",
-            style="vivid"
+            quality="standard"  # Используем standard вместо hd для скорости
         )
-
-        if not response.data:
-            logger.error("DALL-E response contains no data")
-            return None
-
-        return response.data[0].url
+        logger.info(f"OpenAI meme generation request took {time.time() - start_time:.2f} seconds")
+        return response.data[0].url if response.data else None
     except Exception as e:
         logger.error(f"Error generating ML meme: {str(e)}")
         return None
 
+@lru_cache(maxsize=20)
 def get_random_ml_history() -> dict:
     """Get a random historical fact about machine learning with a test question."""
+    start_time = time.time()
     try:
         response = client.chat.completions.create(
-            model="gpt-4",  # Using GPT-4 for better historical context
+            model="gpt-4",
             messages=[
                 {
                     "role": "system",
-                    "content": "Создайте случайную историческую справку о машинном обучении. "
-                    "Включите конкретный год, значимое событие и его влияние на развитие ML. "
-                    "После справки добавьте тестовый вопрос с вариантами ответа (A, B, C) и объяснение правильного ответа. "
-                    "Верните ответ в формате JSON со следующими полями: "
-                    "history (текст справки), question (текст вопроса), "
-                    "correct_answer (A, B или C), explanation (объяснение правильного ответа). "
-                    "Ответ должен быть на русском языке."
+                    "content": "Создайте короткую историческую справку о ML с тестом."
                 },
                 {
                     "role": "user",
@@ -107,13 +101,15 @@ def get_random_ml_history() -> dict:
                 }
             ],
             response_format={"type": "json_object"},
-            max_tokens=1000
+            max_tokens=400,  # Уменьшаем размер ответа для скорости
+            temperature=0.7
         )
+        logger.info(f"OpenAI history request took {time.time() - start_time:.2f} seconds")
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"Error getting ML history: {str(e)}")
         return {
-            "history": "Извините, произошла ошибка при получении исторической справки.",
+            "history": "Извините, произошла ошибка.",
             "question": None,
             "correct_answer": None,
             "explanation": None

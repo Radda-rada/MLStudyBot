@@ -61,6 +61,14 @@ def get_cached_quiz(quiz_id: int):
         logger.error(f"Error getting cached quiz {quiz_id}: {str(e)}")
         return None
 
+@lru_cache(maxsize=100)
+def normalize_button_text(text: str) -> str:
+    """Нормализует текст кнопки для сравнения."""
+    if not text:
+        return ""
+    # Удаляем лишние пробелы и приводим к нижнему регистру
+    return ' '.join(text.strip().lower().split())
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Оптимизированный обработчик команды start."""
     logger.info(f"Received /start command from user {update.effective_user.id}")
@@ -273,26 +281,25 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Обработка кнопок меню
         text = update.message.text
-        logger.debug(f"Received button text: '{text}'")  # Добавляем логирование для отладки
+        logger.debug(f"Received button text: '{text}'")  # Логируем полученный текст
 
         # Нормализуем текст для сравнения
-        normalized_text = text.strip() if text else ""
+        normalized_text = normalize_button_text(text)
+        logger.debug(f"Normalized button text: '{normalized_text}'")  # Логируем нормализованный текст
 
         # Словарь соответствия текста кнопок и действий
         button_actions = {
-            "📚 Урок": handle_lesson,
-            "📚 К списку уроков": handle_lesson,
-            "📚 К урокам": handle_lesson,
-            "❓ Тест": handle_quiz,
-            "📝 Пройти тест": handle_quiz,
-            "📊 Прогресс": handle_progress,
-            "📜 История": handle_history,
-            "🔄 Другая история": handle_history,
-            "🎨 Мем": handle_meme,
-            "❓ Помощь": help_command
+            normalize_button_text("📚 Урок"): handle_lesson,
+            normalize_button_text("📝 Тест"): handle_quiz,
+            normalize_button_text("❓ Тест"): handle_quiz,
+            normalize_button_text("📊 Прогресс"): handle_progress,
+            normalize_button_text("📜 История"): handle_history,
+            normalize_button_text("🔄 Другая история"): handle_history,
+            normalize_button_text("🎨 Мем"): handle_meme,
+            normalize_button_text("❓ Помощь"): help_command
         }
 
-        # Проверяем, есть ли текст кнопки в словаре действий
+        # Проверяем, есть ли нормализованный текст кнопки в словаре действий
         if normalized_text in button_actions:
             logger.info(f"Handling button press: {normalized_text}")
             await button_actions[normalized_text](update, context)
@@ -747,7 +754,7 @@ async def handle_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Завершено уроков: {stats['completed_lessons']}\n"
             f"🔄 Всего попыток: {stats['total_attempts']}\n"
             f"👍 Успешных попыток: {stats['successful_attempts']}\n"
-            f"📈 Процент успеха: {stats['success_rate']:.1f}%\n"
+            f"📈 Процент успеха:: {stats['success_rate']:.1f}%\n"
             f"🕒 Последняя активность: {stats['last_activity'].strftime('%Y-%m-%d %H:%M')}"
         )
 

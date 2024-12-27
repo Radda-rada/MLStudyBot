@@ -2,6 +2,7 @@ import os
 from openai import OpenAI
 import logging
 from functools import lru_cache
+import json
 import time
 from typing import Optional
 
@@ -71,6 +72,62 @@ def analyze_ml_question(question: str) -> str:
         logger.error(f"Error analyzing ML question: {e}")
         return "Извините, произошла ошибка. Попробуйте позже."
 
+def get_random_ml_history() -> dict:
+    """Get a random historical fact about machine learning with a test question."""
+    start_time = time.time()
+    try:
+        # Добавляем случайность в промпт для получения разных историй
+        prompts = [
+            "Create an interesting historical fact about early machine learning pioneers",
+            "Share a fascinating story about a breakthrough in AI history",
+            "Tell about an important milestone in the development of neural networks",
+            "Describe a crucial moment in the history of deep learning",
+            "Explain a historical connection between statistics and machine learning"
+        ]
+        from random import choice
+        current_prompt = choice(prompts)
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"{current_prompt}. "
+                        "Format the response as JSON with the structure:\n"
+                        "{\n"
+                        "  \"history\": \"historical fact about ML\",\n"
+                        "  \"question\": \"test question with options A, B, C\",\n"
+                        "  \"correct_answer\": \"A, B, or C\",\n"
+                        "  \"explanation\": \"explanation of the correct answer\"\n"
+                        "}"
+                    )
+                }
+            ],
+            max_tokens=MAX_TOKENS['history'],
+            temperature=0.8,  # Увеличиваем для большей вариативности
+            timeout=TIMEOUT
+        )
+        content = response.choices[0].message.content
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}, content: {content}")
+            return {
+                "history": "Извините, произошла ошибка при получении исторической справки.",
+                "question": "Попробуйте позже.",
+                "correct_answer": "A",
+                "explanation": "Произошла ошибка при обработке ответа."
+            }
+    except Exception as e:
+        logger.error(f"Error getting ML history: {str(e)}")
+        return {
+            "history": "Извините, произошла ошибка.",
+            "question": "Попробуйте позже.",
+            "correct_answer": "A",
+            "explanation": "Произошла ошибка при получении данных."
+        }
+
 def generate_ml_meme(concept: Optional[str] = None) -> Optional[str]:
     """Generate a meme about machine learning using DALL-E."""
     start_time = time.time()
@@ -94,42 +151,3 @@ def generate_ml_meme(concept: Optional[str] = None) -> Optional[str]:
     except Exception as e:
         logger.error(f"Error generating ML meme: {str(e)}")
         return None
-
-@lru_cache(maxsize=20)
-def get_random_ml_history() -> dict:
-    """Get a random historical fact about machine learning with a test question."""
-    start_time = time.time()
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Создайте краткую историческую справку о ML с тестом."
-                },
-                {
-                    "role": "user",
-                    "content": "Сгенерируйте короткую историческую справку и тестовый вопрос"
-                }
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=MAX_TOKENS['history'],
-            temperature=0.5,
-            timeout=TIMEOUT
-        )
-        logger.info(f"OpenAI history request took {time.time() - start_time:.2f} seconds")
-        content = response.choices[0].message.content
-        return content if isinstance(content, dict) else {
-            "history": "Извините, произошла ошибка.",
-            "question": None,
-            "correct_answer": None,
-            "explanation": None
-        }
-    except Exception as e:
-        logger.error(f"Error getting ML history: {str(e)}")
-        return {
-            "history": "Извините, произошла ошибка.",
-            "question": None,
-            "correct_answer": None,
-            "explanation": None
-        }

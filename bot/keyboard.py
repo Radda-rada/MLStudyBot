@@ -22,7 +22,23 @@ def get_lesson_keyboard():
     """
     keyboard = [
         ['📝 Пройти тест'],
-        ['📚 К списку уроков']
+        ['📚 К списку уроков'],
+        ['📜 История', '❓ Помощь']
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        input_field_placeholder="Выберите действие"
+    )
+
+def get_history_keyboard():
+    """
+    Создает клавиатуру для исторической справки
+    """
+    keyboard = [
+        ['📚 К урокам'],
+        ['🔄 Другая история']
     ]
     return ReplyKeyboardMarkup(
         keyboard,

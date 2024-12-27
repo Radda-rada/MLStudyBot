@@ -5,7 +5,7 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
 from content.lessons import LESSONS
 from content.quizzes import QUIZZES
-from bot.keyboard import get_main_keyboard, get_lesson_keyboard
+from bot.keyboard import get_main_keyboard, get_lesson_keyboard, get_history_keyboard
 from utils.db_utils import (
     get_or_create_user, update_progress, get_user_progress,
     update_user_lesson, get_user_statistics, get_all_users_statistics
@@ -266,11 +266,39 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Quiz handling took {time.time() - start_time:.2f} seconds")
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Оптимизированный обработчик ответов."""
+    """Оптимизированный обработчик ответов и кнопок."""
     start_time = time.time()
     logger.info(f"Starting handle_answer for user {update.effective_user.id}")
 
     try:
+        # Обработка кнопок меню
+        text = update.message.text
+        logger.debug(f"Received button text: '{text}'")  # Добавляем логирование для отладки
+
+        # Нормализуем текст для сравнения
+        normalized_text = text.strip() if text else ""
+
+        # Словарь соответствия текста кнопок и действий
+        button_actions = {
+            "📚 Урок": handle_lesson,
+            "📚 К списку уроков": handle_lesson,
+            "📚 К урокам": handle_lesson,
+            "❓ Тест": handle_quiz,
+            "📝 Пройти тест": handle_quiz,
+            "📊 Прогресс": handle_progress,
+            "📜 История": handle_history,
+            "🔄 Другая история": handle_history,
+            "🎨 Мем": handle_meme,
+            "❓ Помощь": help_command
+        }
+
+        # Проверяем, есть ли текст кнопки в словаре действий
+        if normalized_text in button_actions:
+            logger.info(f"Handling button press: {normalized_text}")
+            await button_actions[normalized_text](update, context)
+            return
+
+        # Если не кнопка, обрабатываем как ответ на вопрос
         user = await asyncio.to_thread(
             get_or_create_user,
             telegram_id=update.effective_user.id
@@ -290,6 +318,24 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Проверяем, есть ли текущий тест или проверочный вопрос
         current_quiz = context.user_data.get('current_quiz')
         current_check = context.user_data.get('current_check')
+        current_history_test = context.user_data.get('current_history_test')
+
+        if current_history_test:
+            # Обработка ответа на исторический тест
+            if answer == current_history_test.get('correct_answer', ''):
+                await update.message.reply_text(
+                    f"✅ Правильно!\n\n{current_history_test.get('explanation', '')}",
+                    reply_markup=get_history_keyboard(),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Неправильно. Попробуйте еще раз или запросите новую историческую справку.",
+                    reply_markup=get_history_keyboard(),
+                    parse_mode='HTML'
+                )
+            context.user_data.pop('current_history_test', None)
+            return
 
         if not current_quiz and not current_check:
             logger.warning(f"No active quiz or check for user {update.effective_user.id}")
@@ -314,19 +360,26 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('current_check', None)
             else:
                 lesson = get_cached_lesson(current_check['lesson_id'])
-                hint_message = (
-                    "❌ Неправильно. Попробуйте еще раз.\n"
-                    "Подсказка: внимательно прочитайте материал урока\n\n"
-                    f"Вопрос: {lesson['check_question']}\n"
-                )
-                for option in lesson['check_options']:
-                    hint_message += f"{option}\n"
+                if lesson:
+                    hint_message = (
+                        "❌ Неправильно. Попробуйте еще раз.\n"
+                        "Подсказка: внимательно прочитайте материал урока\n\n"
+                        f"Вопрос: {lesson['check_question']}\n"
+                    )
+                    for option in lesson['check_options']:
+                        hint_message += f"{option}\n"
 
-                await update.message.reply_text(
-                    hint_message,
-                    reply_markup=get_lesson_keyboard(),
-                    parse_mode='HTML'
-                )
+                    await update.message.reply_text(
+                        hint_message,
+                        reply_markup=get_lesson_keyboard(),
+                        parse_mode='HTML'
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Неправильно. Попробуйте еще раз.",
+                        reply_markup=get_lesson_keyboard(),
+                        parse_mode='HTML'
+                    )
                 logger.info(f"Incorrect answer for check question from user {user.id}")
             return
 
@@ -491,35 +544,54 @@ async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /history command to show random ML history facts."""
     logger.info(f"Starting handle_history for user {update.effective_user.id}")
     try:
+        await update.message.reply_text(
+            "🕒 Генерирую историческую справку...",
+            parse_mode='HTML'
+        )
+
         history_data = get_random_ml_history()
         logger.debug(f"Got history data: {bool(history_data)}")
 
         try:
-            if isinstance(history_data, dict):
-                data = history_data
-            else:
-                data = json.loads(history_data)
+            data = history_data if isinstance(history_data, dict) else json.loads(history_data)
 
-            context.user_data['current_history_test'] = data
+            if not all(key in data for key in ['history', 'question', 'correct_answer', 'explanation']):
+                raise ValueError("Missing required fields in history data")
 
-            await update.message.reply_text(
+            context.user_data['current_history_test'] = {
+                'correct_answer': data['correct_answer'],
+                'explanation': data['explanation']
+            }
+
+            keyboard = get_history_keyboard()
+
+            message = (
                 f"📚 {data['history']}\n\n"
                 f"❓ Тест на понимание:\n{data['question']}\n\n"
-                "Выберите ответ (A, B или C):",
+                "Выберите ответ (A, B или C):"
+            )
+
+            await update.message.reply_text(
+                message,
+                reply_markup=keyboard,
                 parse_mode='HTML'
             )
             logger.info(f"Successfully sent history to user {update.effective_user.id}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing history data: {str(e)}")
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.error(f"Error processing history data: {str(e)}")
             await update.message.reply_text(
-                "😔 Извините, произошла ошибка при получении исторической справки.\n"
-                "Попробуйте позже.",
+                "😔 Извините, произошла ошибка при обработке исторической справки.\n"
+                "Попробуйте еще раз, используя команду /history",
+                reply_markup=get_main_keyboard(),
                 parse_mode='HTML'
             )
+
     except Exception as e:
         logger.error(f"Error in handle_history: {str(e)}", exc_info=True)
         await update.message.reply_text(
             "Извините, произошла ошибка. Попробуйте позже.",
+            reply_markup=get_main_keyboard(),
             parse_mode='HTML'
         )
 
@@ -682,7 +754,7 @@ async def handle_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(stats_message, parse_mode='HTML')
 
     except ValueError:
-        await update.message.reply_text(
+        await update.message.message.reply_text(
             "❌ Некорректный ID пользователя.\n"
             "Используйте только цифры.",
             parse_mode='HTML'
